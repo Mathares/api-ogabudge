@@ -18,6 +18,12 @@ var builder = WebApplication.CreateBuilder(args);
 // appsettings.Local.json porte les vraies credentials (chaîne PostgreSQL, secret JWT).
 // Il surcharge appsettings.json et n'est jamais versionné.
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
+// Les variables d'environnement sont relues APRÈS ce fichier, donc elles l'emportent.
+// Sur App Service, les paramètres d'application font autorité quoi qu'il arrive : si un
+// appsettings.Local.json se retrouvait un jour dans le paquet déployé, il ne détournerait
+// pas silencieusement l'API vers une autre base.
+builder.Configuration.AddEnvironmentVariables();
 builder.Configuration.AddEnvironmentVariables("OGABUDGET_");
 
 // ─── PostgreSQL ──────────────────────────────────────────────────────────────
