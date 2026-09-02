@@ -1,6 +1,147 @@
-@api_ogabudge_HostAddress = http://localhost:5224
+@hote = http://localhost:5224
+@accessToken = coller-le-token-de-la-reponse-de-connexion
 
-GET {{api_ogabudge_HostAddress}}/weatherforecast/
-Accept: application/json
+### Santé
+GET {{hote}}/api/sante
 
-###
+### Inscription
+POST {{hote}}/api/auth/inscription
+Content-Type: application/json
+
+{
+  "email": "mathieu@example.bf",
+  "motDePasse": "MotDePasseSolide2026",
+  "nomComplet": "Mathieu Kaboré",
+  "telephone": "+226 70 00 00 00",
+  "devise": "XOF",
+  "appareil": "Samsung A14 · Android 14"
+}
+
+### Connexion
+POST {{hote}}/api/auth/connexion
+Content-Type: application/json
+
+{
+  "email": "mathieu@example.bf",
+  "motDePasse": "MotDePasseSolide2026",
+  "appareil": "Samsung A14 · Android 14"
+}
+
+### Profil
+GET {{hote}}/api/auth/moi
+Authorization: Bearer {{accessToken}}
+
+### Comptes
+GET {{hote}}/api/comptes
+Authorization: Bearer {{accessToken}}
+
+### Créer un compte Orange Money
+POST {{hote}}/api/comptes
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "nom": "Orange Money",
+  "type": "mobile_money",
+  "institution": "Orange Burkina",
+  "soldeInitial": 25000,
+  "couleur": "#ffb400",
+  "icone": "phone"
+}
+
+### Catégories (arborescence)
+GET {{hote}}/api/categories?type=depense&arborescence=true
+Authorization: Bearer {{accessToken}}
+
+### Enregistrer une dépense
+POST {{hote}}/api/transactions
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "type": "depense",
+  "montant": 3500,
+  "compteId": "00000000-0000-0000-0000-000000000000",
+  "categorieId": "00000000-0000-0000-0000-000000000000",
+  "libelle": "Courses au marché",
+  "tiers": "Marché de Gounghin",
+  "modePaiement": "especes"
+}
+
+### Transfert entre comptes
+POST {{hote}}/api/transactions
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "type": "transfert",
+  "montant": 50000,
+  "compteId": "00000000-0000-0000-0000-000000000000",
+  "compteDestinationId": "00000000-0000-0000-0000-000000000000",
+  "libelle": "Virement vers épargne"
+}
+
+### Fil des transactions du mois
+GET {{hote}}/api/transactions?debut=2026-09-01&fin=2026-09-30&page=1&taillePage=50
+Authorization: Bearer {{accessToken}}
+
+### Budget mensuel Alimentation
+POST {{hote}}/api/budgets
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "nom": "Alimentation",
+  "categorieId": "00000000-0000-0000-0000-000000000000",
+  "montantPlafond": 120000,
+  "periode": "mensuelle",
+  "seuilAlerte": 80
+}
+
+### Budgets en alerte
+GET {{hote}}/api/budgets/alertes
+Authorization: Bearer {{accessToken}}
+
+### Objectif d'épargne
+POST {{hote}}/api/objectifs
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "nom": "Moto Sanili",
+  "montantCible": 750000,
+  "dateEcheance": "2027-06-30",
+  "icone": "target",
+  "couleur": "#ffb400"
+}
+
+### Récurrence : loyer mensuel
+POST {{hote}}/api/recurrences
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "libelle": "Loyer",
+  "type": "depense",
+  "montant": 75000,
+  "compteId": "00000000-0000-0000-0000-000000000000",
+  "frequence": "mensuelle",
+  "jourDuMois": 5,
+  "autoGenerer": true
+}
+
+### Générer les échéances échues
+POST {{hote}}/api/recurrences/generer
+Authorization: Bearer {{accessToken}}
+
+### Tableau de bord
+GET {{hote}}/api/statistiques/tableau-de-bord
+Authorization: Bearer {{accessToken}}
+
+### Répartition des dépenses
+GET {{hote}}/api/statistiques/par-categorie?type=depense
+Authorization: Bearer {{accessToken}}
+
+### Évolution sur 12 mois
+GET {{hote}}/api/statistiques/evolution?granularite=mois
+Authorization: Bearer {{accessToken}}

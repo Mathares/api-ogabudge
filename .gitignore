@@ -370,3 +370,7 @@ appsettings.Production.json
 appsettings.Staging.json
 appsettings.secrets.json
 secrets.json
+
+# OGABudget — configuration locale hors dépôt (credentials PostgreSQL, secret JWT)
+appsettings.Local.json
+appsettings.Production.json

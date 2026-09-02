@@ -7,12 +7,26 @@
     <RootNamespace>OGABudget.Api</RootNamespace>
     <AssemblyName>api-ogabudge</AssemblyName>
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Les commentaires XML alimentent la documentation Swagger. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- 1591 : membre public sans commentaire. 1573 : un seul param documenté sur plusieurs. -->
+    <NoWarn>$(NoWarn);1591;1573</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.*" />
     <PackageReference Include="Npgsql" Version="9.0.3" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
+  </ItemGroup>
+
+  <!-- Les fichiers de configuration locale ne partent jamais sur App Service : ils
+       portent le mot de passe PostgreSQL et le secret JWT. En production, ces valeurs
+       viennent des paramètres d'application (ConnectionStrings__DefaultConnection,
+       Jwt__Secret), pas du paquet déployé. -->
+  <ItemGroup>
+    <Content Update="appsettings.Local.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.Local.example.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
   <ItemGroup>

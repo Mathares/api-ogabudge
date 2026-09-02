@@ -1,12 +1,14 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 --  OGABudget — Schéma PostgreSQL
---  psql -U postgres -d ogabudget -f 02_Schema.sql
+--  psql -U postgres -d dbogabudge -f 02_Schema.sql
 --  Idempotent : peut être rejoué sans casser une base existante.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";   -- gen_random_uuid()
-CREATE EXTENSION IF NOT EXISTS "citext";     -- e-mails insensibles à la casse
-CREATE EXTENSION IF NOT EXISTS "pg_trgm";    -- recherche par fragment sur les libellés
+-- Aucune extension n'est requise : gen_random_uuid() est natif depuis PostgreSQL 13,
+-- l'unicité des e-mails passe par un index sur lower(email) plutôt que par citext, et
+-- l'index trigramme de recherche n'est créé que si pg_trgm est disponible (voir § 6).
+-- Sur Azure Database for PostgreSQL, activer une extension suppose de l'ajouter au
+-- paramètre serveur azure.extensions : ce schéma s'applique sans cette démarche.
 
 -- ─── Types énumérés ────────────────────────────────────────────────────────
 DO $$
@@ -48,7 +50,7 @@ $$ LANGUAGE plpgsql;
 -- ═══════════════════════════════════════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS utilisateurs (
     id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    email               citext      NOT NULL UNIQUE,
+    email               text        NOT NULL,
     mot_de_passe_hash   text        NOT NULL,
     nom_complet         text        NOT NULL,
     telephone           text,
@@ -64,6 +66,9 @@ CREATE TABLE IF NOT EXISTS utilisateurs (
     date_maj            timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT ck_utilisateurs_jour_debut CHECK (jour_debut_mois BETWEEN 1 AND 28)
 );
+
+-- Unicité insensible à la casse : « Mathieu@x.bf » et « mathieu@x.bf » sont le même compte.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_utilisateurs_email ON utilisateurs (lower(email));
 
 DROP TRIGGER IF EXISTS trg_utilisateurs_maj ON utilisateurs;
 CREATE TRIGGER trg_utilisateurs_maj BEFORE UPDATE ON utilisateurs
@@ -229,9 +234,16 @@ CREATE INDEX IF NOT EXISTS ix_transactions_compte ON transactions(compte_id);
 CREATE INDEX IF NOT EXISTS ix_transactions_destination ON transactions(compte_destination_id);
 CREATE INDEX IF NOT EXISTS ix_transactions_categorie ON transactions(categorie_id);
 -- Index trigramme : le mobile filtre au fur et à mesure de la frappe (ILIKE '%mot%'),
--- ce qu'un index plein texte classique ne saurait pas servir.
-CREATE INDEX IF NOT EXISTS ix_transactions_recherche
-    ON transactions USING gin ((libelle || ' ' || COALESCE(tiers, '')) gin_trgm_ops);
+-- ce qu'un index plein texte classique ne saurait pas servir. Créé seulement si pg_trgm
+-- est activable ; sans lui la recherche fonctionne, simplement par balayage.
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    CREATE INDEX IF NOT EXISTS ix_transactions_recherche
+        ON transactions USING gin ((libelle || ' ' || COALESCE(tiers, '')) gin_trgm_ops);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pg_trgm indisponible : la recherche sur les libellés restera séquentielle (%).', SQLERRM;
+END $$;
 
 DROP TRIGGER IF EXISTS trg_transactions_maj ON transactions;
 CREATE TRIGGER trg_transactions_maj BEFORE UPDATE ON transactions

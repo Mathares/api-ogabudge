@@ -12,7 +12,7 @@ public class AuthService
     private readonly ILogger<AuthService> _logger;
 
     private const string ColonnesUtilisateur =
-        "id, email::text, nom_complet, telephone, devise::text, locale, fuseau_horaire, " +
+        "id, email, nom_complet, telephone, devise::text, locale, fuseau_horaire, " +
         "avatar_url, jour_debut_mois, email_verifie, date_creation";
 
     public AuthService(NpgsqlDataSource db, TokenService tokens, ILogger<AuthService> logger)
@@ -37,7 +37,7 @@ public class AuthService
             """
             INSERT INTO utilisateurs (email, mot_de_passe_hash, nom_complet, telephone, devise)
             VALUES (@email, @hash, @nom, @tel, @devise)
-            ON CONFLICT (email) DO NOTHING
+            ON CONFLICT (lower(email)) DO NOTHING
             RETURNING id
             """, conn, tx))
         {
@@ -95,7 +95,8 @@ public class AuthService
         string hash;
         bool actif;
         await using (var cmd = new NpgsqlCommand(
-            "SELECT id, mot_de_passe_hash, actif FROM utilisateurs WHERE email = @email LIMIT 1", conn))
+            "SELECT id, mot_de_passe_hash, actif FROM utilisateurs WHERE lower(email) = lower(@email) LIMIT 1",
+            conn))
         {
             cmd.Ajouter("email", req.Email.Trim());
             await using var reader = await cmd.ExecuteReaderAsync(ct);

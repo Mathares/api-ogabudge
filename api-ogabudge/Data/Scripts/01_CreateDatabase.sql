@@ -1,15 +1,16 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 --  OGABudget — Création de la base
---  À exécuter en superutilisateur sur la base « postgres » :
---    psql -U postgres -f 01_CreateDatabase.sql
---  Puis appliquer le schéma :
---    psql -U postgres -d ogabudget -f 02_Schema.sql
+--
+--  Sur PostgreSQL local :
+--    psql -U postgres -p 5433 -f 01_CreateDatabase.sql
+--    psql -U postgres -p 5433 -d dbogabudge -f 02_Schema.sql
+--
+--  Sur Azure Database for PostgreSQL, la base est créée depuis le portail :
+--  ce script n'y sert pas, appliquer directement 02_Schema.sql.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-CREATE DATABASE ogabudget
+CREATE DATABASE dbogabudge
     WITH ENCODING = 'UTF8'
-         LC_COLLATE = 'fr_FR.UTF-8'
-         LC_CTYPE   = 'fr_FR.UTF-8'
-         TEMPLATE   = template0;
+         TEMPLATE = template0;
 
-COMMENT ON DATABASE ogabudget IS 'OGABudget — budget personnel mobile (OGALIX GROUP)';
+COMMENT ON DATABASE dbogabudge IS 'OGABudget — budget personnel mobile (OGALIX GROUP)';
