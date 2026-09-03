@@ -37,6 +37,19 @@ public class ConnexionRequest
     public string? Appareil { get; set; }
 }
 
+/// <summary>Connexion / inscription via jeton ID Google Sign-In.</summary>
+public class GoogleAuthRequest
+{
+    [Required, MaxLength(4096)]
+    public string IdToken { get; set; } = "";
+
+    [MaxLength(3)]
+    public string? Devise { get; set; }
+
+    [MaxLength(120)]
+    public string? Appareil { get; set; }
+}
+
 public class RafraichirRequest
 {
     [Required]

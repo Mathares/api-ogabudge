@@ -51,7 +51,7 @@ $$ LANGUAGE plpgsql;
 CREATE TABLE IF NOT EXISTS utilisateurs (
     id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     email               text        NOT NULL,
-    mot_de_passe_hash   text        NOT NULL,
+    mot_de_passe_hash   text,                          -- NULL si compte Google pur
     nom_complet         text        NOT NULL,
     telephone           text,
     devise              char(3)     NOT NULL DEFAULT 'XOF',
@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS utilisateurs (
     jour_debut_mois     smallint    NOT NULL DEFAULT 1,      -- mois budgétaire décalé (ex. paie le 25)
     email_verifie       boolean     NOT NULL DEFAULT false,
     actif               boolean     NOT NULL DEFAULT true,
+    auth_provider       text        NOT NULL DEFAULT 'local', -- local | google | local+google
+    google_sub          text,                              -- subject Google (unique)
     derniere_connexion  timestamptz,
     date_creation       timestamptz NOT NULL DEFAULT now(),
     date_maj            timestamptz NOT NULL DEFAULT now(),
@@ -69,6 +71,8 @@ CREATE TABLE IF NOT EXISTS utilisateurs (
 
 -- Unicité insensible à la casse : « Mathieu@x.bf » et « mathieu@x.bf » sont le même compte.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_utilisateurs_email ON utilisateurs (lower(email));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_utilisateurs_google_sub
+    ON utilisateurs (google_sub) WHERE google_sub IS NOT NULL;
 
 DROP TRIGGER IF EXISTS trg_utilisateurs_maj ON utilisateurs;
 CREATE TRIGGER trg_utilisateurs_maj BEFORE UPDATE ON utilisateurs

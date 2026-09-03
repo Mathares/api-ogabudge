@@ -41,6 +41,31 @@ public class AuthController : ControleurAuthentifie
         return Ok(session);
     }
 
+    /// <summary>Connexion ou inscription via Google Sign-In (jeton ID).</summary>
+    [AllowAnonymous]
+    [EnableRateLimiting("connexion")]
+    [HttpPost("google")]
+    [ProducesResponseType(typeof(SessionDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErreurApi), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErreurApi), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ErreurApi), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ErreurApi), StatusCodes.Status503ServiceUnavailable)]
+    public async Task<ActionResult<SessionDto>> Google([FromBody] GoogleAuthRequest req, CancellationToken ct)
+    {
+        var (session, code, message) = await _service.ConnecterAvecGoogleAsync(req, AdresseIp, ct);
+        if (session != null) return Ok(session);
+
+        return code switch
+        {
+            "google_non_configure" => StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new ErreurApi(message ?? "Google non configuré.", code)),
+            "email_deja_pris" => Conflict(new ErreurApi(message ?? "E-mail déjà utilisé.", code)),
+            "compte_inactif" => Unauthorized(new ErreurApi(message ?? "Compte inactif.", code)),
+            _ => Unauthorized(new ErreurApi(message ?? "Jeton Google invalide.", code ?? "jeton_google_invalide")),
+        };
+    }
+
     /// <summary>Échange un refresh token contre une nouvelle paire de jetons. L'ancien est révoqué.</summary>
     [AllowAnonymous]
     [HttpPost("rafraichir")]

@@ -1,3 +1,4 @@
+using Google.Apis.Auth;
 using Npgsql;
 using OGABudget.Api.Infrastructure;
 using OGABudget.Api.Models;
@@ -9,16 +10,22 @@ public class AuthService
 {
     private readonly NpgsqlDataSource _db;
     private readonly TokenService _tokens;
+    private readonly IConfiguration _config;
     private readonly ILogger<AuthService> _logger;
 
     private const string ColonnesUtilisateur =
         "id, email, nom_complet, telephone, devise::text, locale, fuseau_horaire, " +
         "avatar_url, jour_debut_mois, email_verifie, date_creation";
 
-    public AuthService(NpgsqlDataSource db, TokenService tokens, ILogger<AuthService> logger)
+    public AuthService(
+        NpgsqlDataSource db,
+        TokenService tokens,
+        IConfiguration config,
+        ILogger<AuthService> logger)
     {
         _db = db;
         _tokens = tokens;
+        _config = config;
         _logger = logger;
     }
 
@@ -92,7 +99,7 @@ public class AuthService
         await using var conn = await _db.OpenConnectionAsync(ct);
 
         Guid id;
-        string hash;
+        string? hash;
         bool actif;
         await using (var cmd = new NpgsqlCommand(
             "SELECT id, mot_de_passe_hash, actif FROM utilisateurs WHERE lower(email) = lower(@email) LIMIT 1",
@@ -108,11 +115,13 @@ public class AuthService
                 return null;
             }
             id = reader.GetGuid(0);
-            hash = reader.GetString(1);
+            hash = reader.IsDBNull(1) ? null : reader.GetString(1);
             actif = reader.GetBoolean(2);
         }
 
-        if (!actif || !PasswordHasher.Verifier(req.MotDePasse, hash)) return null;
+        // Compte Google pur : pas de mot de passe local.
+        if (!actif || string.IsNullOrEmpty(hash) || !PasswordHasher.Verifier(req.MotDePasse, hash))
+            return null;
 
         await using var tx = await conn.BeginTransactionAsync(ct);
 
@@ -129,6 +138,170 @@ public class AuthService
         var session = await OuvrirSessionAsync(conn, tx, utilisateur, req.Appareil, ip, ct);
         await tx.CommitAsync(ct);
         return session;
+    }
+
+    // ─── Google Sign-In (connexion + inscription) ───────────────────────────
+
+    /// <summary>
+    /// Vérifie le jeton ID Google, puis connecte ou crée le compte.
+    /// Si l'e-mail existe déjà en local, le compte est lié à Google.
+    /// </summary>
+    /// <returns>
+    /// Session, ou <c>null</c> si le jeton est invalide / audiences non configurées.
+    /// </returns>
+    public async Task<(SessionDto? Session, string? ErreurCode, string? Message)> ConnecterAvecGoogleAsync(
+        GoogleAuthRequest req, string? ip, CancellationToken ct)
+    {
+        var audiences = _config.GetSection("Auth:Google:ClientIds").Get<string[]>()
+            ?.Where(id => !string.IsNullOrWhiteSpace(id)
+                          && !id.StartsWith("VOTRE-", StringComparison.OrdinalIgnoreCase))
+            .ToArray() ?? [];
+
+        if (audiences.Length == 0)
+        {
+            return (null, "google_non_configure",
+                "Connexion Google non configurée côté serveur (Auth:Google:ClientIds).");
+        }
+
+        GoogleJsonWebSignature.Payload payload;
+        try
+        {
+            payload = await GoogleJsonWebSignature.ValidateAsync(
+                req.IdToken,
+                new GoogleJsonWebSignature.ValidationSettings { Audience = audiences });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Jeton ID Google refusé.");
+            return (null, "jeton_google_invalide", "Jeton Google invalide ou expiré.");
+        }
+
+        if (string.IsNullOrWhiteSpace(payload.Email) || string.IsNullOrWhiteSpace(payload.Subject))
+            return (null, "jeton_google_invalide", "Le jeton Google ne contient pas d’e-mail.");
+
+        if (payload.EmailVerified != true)
+            return (null, "email_non_verifie", "L’e-mail Google n’est pas vérifié.");
+
+        var email = payload.Email.Trim();
+        var sub = payload.Subject;
+        var nom = string.IsNullOrWhiteSpace(payload.Name)
+            ? email.Split('@')[0]
+            : payload.Name.Trim();
+        var avatar = string.IsNullOrWhiteSpace(payload.Picture) ? null : payload.Picture.Trim();
+        var devise = string.IsNullOrWhiteSpace(req.Devise) ? "XOF" : req.Devise.Trim().ToUpperInvariant();
+
+        await using var conn = await _db.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+
+        Guid? utilisateurId = null;
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT id FROM utilisateurs WHERE google_sub = @sub LIMIT 1", conn, tx))
+        {
+            cmd.Ajouter("sub", sub);
+            if (await cmd.ExecuteScalarAsync(ct) is Guid idParSub)
+                utilisateurId = idParSub;
+        }
+
+        if (utilisateurId is null)
+        {
+            await using var cmd = new NpgsqlCommand(
+                """
+                SELECT id, google_sub FROM utilisateurs
+                WHERE lower(email) = lower(@email) LIMIT 1
+                """, conn, tx);
+            cmd.Ajouter("email", email);
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (await reader.ReadAsync(ct))
+            {
+                var idParEmail = reader.GetGuid(0);
+                var subExistant = reader.IsDBNull(1) ? null : reader.GetString(1);
+                if (subExistant is not null && subExistant != sub)
+                {
+                    await reader.CloseAsync();
+                    return (null, "email_deja_pris",
+                        "Cet e-mail est déjà lié à un autre compte Google.");
+                }
+                utilisateurId = idParEmail;
+            }
+        }
+
+        if (utilisateurId is Guid existant)
+        {
+            await using (var cmd = new NpgsqlCommand(
+                """
+                UPDATE utilisateurs SET
+                    google_sub = @sub,
+                    auth_provider = CASE
+                        WHEN auth_provider = 'google' THEN 'google'
+                        ELSE 'local+google'
+                    END,
+                    email_verifie = true,
+                    avatar_url = COALESCE(avatar_url, @avatar),
+                    derniere_connexion = now()
+                WHERE id = @id AND actif = true
+                """, conn, tx))
+            {
+                cmd.Ajouter("id", existant);
+                cmd.Ajouter("sub", sub);
+                cmd.Ajouter("avatar", avatar);
+                if (await cmd.ExecuteNonQueryAsync(ct) == 0)
+                    return (null, "compte_inactif", "Ce compte est désactivé.");
+            }
+
+            var utilisateur = await LireUtilisateurAsync(conn, tx, existant, ct)
+                ?? throw new InvalidOperationException("Utilisateur introuvable après liaison Google.");
+            var session = await OuvrirSessionAsync(conn, tx, utilisateur, req.Appareil, ip, ct);
+            await tx.CommitAsync(ct);
+            return (session, null, null);
+        }
+
+        // Nouvel utilisateur Google — même bootstrap que l'inscription classique.
+        Guid nouvelId;
+        await using (var cmd = new NpgsqlCommand(
+            """
+            INSERT INTO utilisateurs (
+                email, mot_de_passe_hash, nom_complet, devise,
+                email_verifie, auth_provider, google_sub, avatar_url, derniere_connexion)
+            VALUES (@email, NULL, @nom, @devise, true, 'google', @sub, @avatar, now())
+            RETURNING id
+            """, conn, tx))
+        {
+            cmd.Ajouter("email", email);
+            cmd.Ajouter("nom", nom);
+            cmd.Ajouter("devise", devise);
+            cmd.Ajouter("sub", sub);
+            cmd.Ajouter("avatar", avatar);
+            nouvelId = (Guid)(await cmd.ExecuteScalarAsync(ct))!;
+        }
+
+        await using (var cmd = new NpgsqlCommand(
+            """
+            INSERT INTO categories (utilisateur_id, nom, type, icone, couleur, systeme, ordre)
+            SELECT @uid, nom, type, icone, couleur, true, ordre FROM categories_modele
+            """, conn, tx))
+        {
+            cmd.Ajouter("uid", nouvelId);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var cmd = new NpgsqlCommand(
+            """
+            INSERT INTO comptes (utilisateur_id, nom, type, devise, icone, couleur)
+            VALUES (@uid, 'Espèces', 'especes', @devise, 'wallet', '#1a2b5a')
+            """, conn, tx))
+        {
+            cmd.Ajouter("uid", nouvelId);
+            cmd.Ajouter("devise", devise);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        var cree = await LireUtilisateurAsync(conn, tx, nouvelId, ct)
+            ?? throw new InvalidOperationException("Utilisateur introuvable après création Google.");
+        var nouvelleSession = await OuvrirSessionAsync(conn, tx, cree, req.Appareil, ip, ct);
+        await tx.CommitAsync(ct);
+
+        _logger.LogInformation("Nouvel utilisateur Google : {Id}", nouvelId);
+        return (nouvelleSession, null, null);
     }
 
     // ─── Rotation du refresh token ──────────────────────────────────────────
@@ -222,17 +395,18 @@ public class AuthService
         return await LireUtilisateurAsync(conn, null, id, ct);
     }
 
-    /// <returns><c>false</c> si l'ancien mot de passe est incorrect.</returns>
+    /// <returns><c>false</c> si l'ancien mot de passe est incorrect ou absent.</returns>
     public async Task<bool> ChangerMotDePasseAsync(Guid id, ChangerMotDePasseRequest req, CancellationToken ct)
     {
         await using var conn = await _db.OpenConnectionAsync(ct);
 
-        string hash;
+        string? hash;
         await using (var cmd = new NpgsqlCommand(
             "SELECT mot_de_passe_hash FROM utilisateurs WHERE id = @id", conn))
         {
             cmd.Ajouter("id", id);
-            if (await cmd.ExecuteScalarAsync(ct) is not string h) return false;
+            var raw = await cmd.ExecuteScalarAsync(ct);
+            if (raw is not string h || string.IsNullOrEmpty(h)) return false;
             hash = h;
         }
 
